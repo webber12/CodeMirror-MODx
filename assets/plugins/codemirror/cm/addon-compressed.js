@@ -1,4 +1,86 @@
-(function(){function r(e){function p(i,s,o){if(!i.text)return;var u=a?0:i.text.length-1,p=a?i.text.length:-1;if(i.text.length>r)return null;var d=i.text.length<1e3;if(o!=null)u=o+f;for(;u!=p;u+=f){var v=i.text.charAt(u);if(h.test(v)&&(!d||e.getTokenAt(t(s,u+1)).type==l)){var m=n[v];if(m.charAt(1)==">"==a)c.push(v);else if(c.pop()!=m.charAt(0))return{pos:u,match:false};else if(!c.length)return{pos:u,match:true}}}}var r=e.state._matchBrackets.maxScanLineLength||1e4;var i=e.getCursor(),s=e.getLineHandle(i.line),o=i.ch-1;var u=o>=0&&n[s.text.charAt(o)]||n[s.text.charAt(++o)];if(!u)return null;var a=u.charAt(1)==">",f=a?1:-1;var l=e.getTokenAt(t(i.line,o+1)).type;var c=[s.text.charAt(o)],h=/[(){}[\]]/;for(var d=i.line,v,m=a?Math.min(d+100,e.lineCount()):Math.max(-1,d-100);d!=m;d+=f){if(d==i.line)v=p(s,d,o);else v=p(e.getLineHandle(d),d);if(v)break}return{from:t(i.line,o),to:v&&t(d,v.pos),match:v&&v.match}}function i(n,i){var s=n.state._matchBrackets.maxHighlightLineLength||1e3;var o=r(n);if(!o||n.getLine(o.from.line).length>s||o.to&&n.getLine(o.to.line).length>s)return;var u=o.match?"CodeMirror-matchingbracket":"CodeMirror-nonmatchingbracket";var a=n.markText(o.from,t(o.from.line,o.from.ch+1),{className:u});var f=o.to&&n.markText(o.to,t(o.to.line,o.to.ch+1),{className:u});if(e&&n.state.focused)n.display.input.focus();var l=function(){n.operation(function(){a.clear();f&&f.clear()})};if(i)setTimeout(l,800);else return l}function o(e){e.operation(function(){if(s){s();s=null}if(!e.somethingSelected())s=i(e,false)})}var e=/MSIE \d/.test(navigator.userAgent)&&(document.documentMode==null||document.documentMode<8);var t=CodeMirror.Pos;var n={"(":")>",")":"(<","[":"]>","]":"[<","{":"}>","}":"{<"};var s=null;CodeMirror.defineOption("matchBrackets",false,function(e,t,n){if(n&&n!=CodeMirror.Init)e.off("cursorActivity",o);if(t){e.state._matchBrackets=typeof t=="object"?t:{};e.on("cursorActivity",o)}});CodeMirror.defineExtension("matchBrackets",function(){i(this,true)});CodeMirror.defineExtension("findMatchingBracket",function(){return r(this)})})()
+(function() {
+  var ie_lt8 = /MSIE \d/.test(navigator.userAgent) &&
+    (document.documentMode == null || document.documentMode < 8);
+
+  var Pos = CodeMirror.Pos;
+
+  var matching = {"(": ")>", ")": "(<", "[": "]>", "]": "[<", "{": "}>", "}": "{<"};
+  function findMatchingBracket(cm) {
+    var maxScanLen = cm.state._matchBrackets.maxScanLineLength || 10000;
+
+    var cur = cm.getCursor(), line = cm.getLineHandle(cur.line), pos = cur.ch - 1;
+    var match = (pos >= 0 && matching[line.text.charAt(pos)]) || matching[line.text.charAt(++pos)];
+    if (!match) return null;
+    var forward = match.charAt(1) == ">", d = forward ? 1 : -1;
+    var style = cm.getTokenAt(Pos(cur.line, pos + 1)).type;
+
+    var stack = [line.text.charAt(pos)], re = /[(){}[\]]/;
+    function scan(line, lineNo, start) {
+      if (!line.text) return;
+      var pos = forward ? 0 : line.text.length - 1, end = forward ? line.text.length : -1;
+      if (line.text.length > maxScanLen) return null;
+      var checkTokenStyles = line.text.length < 1000;
+      if (start != null) pos = start + d;
+      for (; pos != end; pos += d) {
+        var ch = line.text.charAt(pos);
+        if (re.test(ch) && (!checkTokenStyles || cm.getTokenAt(Pos(lineNo, pos + 1)).type == style)) {
+          var match = matching[ch];
+          if (match.charAt(1) == ">" == forward) stack.push(ch);
+          else if (stack.pop() != match.charAt(0)) return {pos: pos, match: false};
+          else if (!stack.length) return {pos: pos, match: true};
+        }
+      }
+    }
+    for (var i = cur.line, found, e = forward ? Math.min(i + 100, cm.lineCount()) : Math.max(-1, i - 100); i != e; i+=d) {
+      if (i == cur.line) found = scan(line, i, pos);
+      else found = scan(cm.getLineHandle(i), i);
+      if (found) break;
+    }
+    return {from: Pos(cur.line, pos), to: found && Pos(i, found.pos), match: found && found.match};
+  }
+
+  function matchBrackets(cm, autoclear) {
+    // Disable brace matching in long lines, since it'll cause hugely slow updates
+    var maxHighlightLen = cm.state._matchBrackets.maxHighlightLineLength || 1000;
+    var found = findMatchingBracket(cm);
+    if (!found || cm.getLine(found.from.line).length > maxHighlightLen ||
+       found.to && cm.getLine(found.to.line).length > maxHighlightLen)
+      return;
+
+    var style = found.match ? "CodeMirror-matchingbracket" : "CodeMirror-nonmatchingbracket";
+    var one = cm.markText(found.from, Pos(found.from.line, found.from.ch + 1), {className: style});
+    var two = found.to && cm.markText(found.to, Pos(found.to.line, found.to.ch + 1), {className: style});
+    // Kludge to work around the IE bug from issue #1193, where text
+    // input stops going to the textare whever this fires.
+    if (ie_lt8 && cm.state.focused) cm.display.input.focus();
+    var clear = function() {
+      cm.operation(function() { one.clear(); two && two.clear(); });
+    };
+    if (autoclear) setTimeout(clear, 800);
+    else return clear;
+  }
+
+  var currentlyHighlighted = null;
+  function doMatchBrackets(cm) {
+    cm.operation(function() {
+      if (currentlyHighlighted) {currentlyHighlighted(); currentlyHighlighted = null;}
+      if (!cm.somethingSelected()) currentlyHighlighted = matchBrackets(cm, false);
+    });
+  }
+
+  CodeMirror.defineOption("matchBrackets", false, function(cm, val, old) {
+    if (old && old != CodeMirror.Init)
+      cm.off("cursorActivity", doMatchBrackets);
+    if (val) {
+      cm.state._matchBrackets = typeof val == "object" ? val : {};
+      cm.on("cursorActivity", doMatchBrackets);
+    }
+  });
+
+  CodeMirror.defineExtension("matchBrackets", function() {matchBrackets(this, true);});
+  CodeMirror.defineExtension("findMatchingBracket", function(){return findMatchingBracket(this);});
+})();
+
 (function(){function c(b){"activeLine"in b.state&&(b.removeLineClass(b.state.activeLine,"wrap",e),b.removeLineClass(b.state.activeLine,"background",a))}function d(b){var d=b.getLineHandle(b.getCursor().line);b.state.activeLine!=d&&(c(b),b.addLineClass(d,"wrap",e),b.addLineClass(d,"background",a),b.state.activeLine=d)}var e="CodeMirror-activeline",a="CodeMirror-activeline-background";CodeMirror.defineOption("styleActiveLine",!1,function(a,e,h){h=h&&h!=CodeMirror.Init;e&&!h?(d(a),a.on("cursorActivity",
 d)):!e&&h&&(a.off("cursorActivity",d),c(a),delete a.state.activeLine)})})();CodeMirror.overlayMode=CodeMirror.overlayParser=function(c,d,e){return{startState:function(){return{base:CodeMirror.startState(c),overlay:CodeMirror.startState(d),basePos:0,baseCur:null,overlayPos:0,overlayCur:null}},copyState:function(a){return{base:CodeMirror.copyState(c,a.base),overlay:CodeMirror.copyState(d,a.overlay),basePos:a.basePos,baseCur:null,overlayPos:a.overlayPos,overlayCur:null}},token:function(a,b){a.start==b.basePos&&(b.baseCur=c.token(a,b.base),b.basePos=a.pos);a.start==b.overlayPos&&
 (a.pos=a.start,b.overlayCur=d.token(a,b.overlay),b.overlayPos=a.pos);a.pos=Math.min(b.basePos,b.overlayPos);a.eol()&&(b.basePos=b.overlayPos=0);return null==b.overlayCur?b.baseCur:null!=b.baseCur&&e?b.baseCur+" "+b.overlayCur:b.overlayCur},indent:c.indent&&function(a,b){return c.indent(a.base,b)},electricChars:c.electricChars,innerMode:function(a){return{state:a.base,mode:c}},blankLine:function(a){c.blankLine&&c.blankLine(a.base);d.blankLine&&d.blankLine(a.overlay)}}};(function(){function c(d,c,a){function b(a){var b=g(d,c);if(!b||b.to.line-b.from.line<h)return null;for(var f=d.findMarksAt(b.from),l=0;l<f.length;++l)if(f[l].__isFold){if(!a)return null;b.cleared=!0;f[l].clear()}return b}var g=a.call?a:a&&a.rangeFinder;if(g){"number"==typeof c&&(c=CodeMirror.Pos(c,0));var h=a&&a.minFoldSize||0,f=b(!0);if(a&&a.scanUp)for(;!f&&c.line>d.firstLine();)c=CodeMirror.Pos(c.line-1,0),f=b(!1);if(f&&!f.cleared){a=a&&a.widget||"\u2194";if("string"==typeof a){var l=document.createTextNode(a);
